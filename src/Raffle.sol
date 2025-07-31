@@ -38,9 +38,9 @@ contract Raffle is VRFConsumerBaseV2Plus {
     */
     // error starts with "Raffle__" to indicate it's specific to the Raffle contract
     error Raffle__EntranceFeeNotMet();
-    error Raffle__IntervalNotMet();
     error Raffle__TransferFailed();
     error Raffle__NotOpen();
+    error Raffle__UpkeedNotNeeded(uint256 raffleState, uint256 playerLength, uint256 balance);
 
     /* 
     Enums
@@ -114,12 +114,36 @@ contract Raffle is VRFConsumerBaseV2Plus {
         emit RaffleEntered(msg.sender, msg.value);
     }
 
-    function pickWinner() external {
-        // Logic to pick a winner using Chainlink VRF
-        // This function would typically be called after a certain condition is met
+    /**
+     * @dev     . Following should be true for upkeep to be performed:
+     *          1. Raffle is open
+     *          2. Enough time has passed since the last winner was picked
+     *          3. There are players in the raffle
+     *          4. The contract has a balance to pay the winner
+     * @return  upkeepNeeded  . True if previous conditions are met, otherwise false
+     * @return  bytes  . Ignored
+     */
+    function checkUpkeep(bytes memory /* checkData */ )
+        public
+        view
+        returns (bool upkeepNeeded, bytes memory /* performData */ )
+    {
+        bool isOpen = (s_raffleState == RaffleState.OPEN);
+        bool hasTimePassed = ((block.timestamp - s_lastTimestamp) > i_interval);
+        bool hasPlayers = (s_players.length > 0);
+        bool hasBalance = (address(this).balance > 0);
 
-        if (block.timestamp - s_lastTimestamp < i_interval) {
-            revert Raffle__IntervalNotMet();
+        upkeepNeeded = (isOpen && hasTimePassed && hasPlayers && hasBalance);
+        // Syntax sugar for returning multiple values, instead of:
+        // return (upkeepNeeded, "0x");
+    }
+
+    function performUpkeep(bytes calldata /* performData */ ) external {
+        // Logic to pick a winner using Chainlink VRF
+
+        (bool upkeepNeeded,) = checkUpkeep("");
+        if (!upkeepNeeded) {
+            revert Raffle__UpkeedNotNeeded(uint256(s_raffleState), s_players.length, address(this).balance);
         }
 
         s_raffleState = RaffleState.CALCULATING;
@@ -131,7 +155,7 @@ contract Raffle is VRFConsumerBaseV2Plus {
                 requestConfirmations: REQUEST_CONFIRMATIONS,
                 callbackGasLimit: i_callbackGasLimit,
                 numWords: NUM_WORDS,
-                extraArgs: VRFV2PlusClient._argsToBytes(VRFV2PlusClient.ExtraArgsV1({nativePayment: false})) // new parameter
+                extraArgs: VRFV2PlusClient._argsToBytes(VRFV2PlusClient.ExtraArgsV1({nativePayment: false}))
             })
         );
     }
@@ -158,5 +182,13 @@ contract Raffle is VRFConsumerBaseV2Plus {
     */
     function getEntranceFee() public view returns (uint256) {
         return i_entranceFee;
+    }
+
+    function getRaffleState() public view returns (RaffleState) {
+        return s_raffleState;
+    }
+
+    function getPlayers(uint256 index) public view returns (address) {
+        return s_players[index];
     }
 }
